@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import sys
+import glob
 from datetime import datetime
 from loguru import logger
 from crawler.crawler import RecursiveCrawler
@@ -15,6 +16,10 @@ logger.add("logs/scraper.log", rotation="10 MB", level="INFO")
 
 from workers.pdf_worker import PDFWorker
 from workers.image_worker import ImageWorker
+
+# UI Colors
+COLOR_GREEN = "\033[92m"
+COLOR_RESET = "\033[0m"
 
 ASCII_LOGO = r"""
   _____ _   _   _  __
@@ -68,7 +73,6 @@ class TUKScraperApp:
         try:
             with open(self.seen_urls_path, "w") as f:
                 json.dump(list(self.seen_urls), f, indent=2)
-            logger.info(f"Saved {len(self.seen_urls)} seen URLs")
         except Exception as e:
             logger.error(f"Failed to save seen URLs: {e}")
 
@@ -127,6 +131,40 @@ class TUKScraperApp:
         except Exception as e:
             logger.error(f"Error processing page {url}: {e}")
 
+    def get_existing_datasets_count(self) -> int:
+        json_files = glob.glob(os.path.join(self.output_base_dir, "*.json"))
+        datasets = [f for f in json_files if "scraped_data_" in f]
+        return len(datasets)
+
+    def list_datasets(self):
+        json_files = glob.glob(os.path.join(self.output_base_dir, "*.json"))
+        datasets = []
+        for f in json_files:
+            if "scraped_data_" in f:
+                stats = os.stat(f)
+                datasets.append({
+                    "name": os.path.basename(f),
+                    "path": f,
+                    "time": stats.st_mtime,
+                    "size": stats.st_size
+                })
+        
+        # Sort by time descending
+        datasets.sort(key=lambda x: x["time"], reverse=True)
+        
+        if not datasets:
+            print("\n[INFO] NO DATASETS FOUND.")
+            return
+
+        print(f"\n{COLOR_GREEN}--- EXISTING DATASETS (NEWEST FIRST) ---{COLOR_RESET}")
+        print(f"{'#':<3} | {'FILENAME':<45} | {'DATE ADDED':<20} | {'SIZE'}")
+        print("-" * 85)
+        for i, ds in enumerate(datasets, 1):
+            dt = datetime.fromtimestamp(ds["time"]).strftime("%Y-%m-%d %H:%M:%S")
+            size_kb = ds["size"] / 1024
+            print(f"{i:<3} | {ds['name']:<45} | {dt:<20} | {size_kb:.1f} KB")
+        print("-" * 85)
+
     async def run(self, mode: str = "full", subdomains: List[str] = None):
         all_config_subdomains = self.load_subdomains()
         
@@ -158,35 +196,31 @@ class TUKScraperApp:
             already_seen=self.seen_urls
         )
 
+        success = False
         try:
             print(f"\n[INFO] Starting scrape. Data will be saved in: {os.path.abspath(self.output_base_dir)}")
             await crawler.crawl()
             success = True
         except asyncio.CancelledError:
             print("\n[WARNING] Scrape was interrupted by user.")
-            success = False
         except Exception as e:
             print(f"\n[ERROR] An unexpected error occurred during scraping: {e}")
             logger.exception("Scrape failed")
-            success = False
         finally:
-            # Save persistence
             self.save_seen_urls()
-            
-            # Save consolidated JSON
             output_file = self.writer.save_run(mode)
             
             if success and output_file:
                 abs_path = os.path.abspath(output_file)
-                print(f"\n" + "="*50)
-                print(f"SCRAPE COMPLETED SUCCESSFULLY")
-                print(f"Total Pages Scraped: {crawler.total_pages_scraped}")
-                print(f"Total URLs Skipped (Already Seen): {crawler.total_skipped}")
-                print(f"Output File: {abs_path}")
-                print("="*50)
+                print(f"\n{COLOR_GREEN}" + "="*50)
+                print(f"CRAWL COMPLETED SUCCESSFULLY")
+                print(f"TOTAL PAGES SCRAPED: {crawler.total_pages_scraped}")
+                print(f"TOTAL URLS SKIPPED: {crawler.total_skipped}")
+                print(f"OUTPUT FILE: {abs_path}")
+                print("="*50 + f"{COLOR_RESET}")
                 logger.info(f"Crawl completed. Output: {abs_path}")
             elif success and not output_file:
-                print(f"\n[INFO] Scrape completed, but NO NEW data was collected.")
+                print(f"\n{COLOR_GREEN}[INFO] CRAWL COMPLETED, BUT NO NEW DATA WAS COLLECTED.{COLOR_RESET}")
                 print(f"Total URLs Skipped: {crawler.total_skipped}")
                 if crawler.total_skipped > 0:
                     print("Hint: If you want to rescrape these URLs, use the 'Reset and Scrape' option (3) from the menu.")
@@ -222,14 +256,20 @@ def main_menu():
             print(ASCII_LOGO)
             print(TOOL_DESCRIPTION)
             print(f"Data will be stored in: {os.path.abspath(output_dir)}")
+            
+            datasets_count = app.get_existing_datasets_count()
+            if datasets_count > 0:
+                print(f"{COLOR_GREEN}[NOTICE] THERE ARE ALREADY {datasets_count} EXISTING DATASETS IN THE DATABASE.{COLOR_RESET}")
+            
             print(CATEGORIES_INFO)
             print("--- Menu ---")
             print("1. Full Scrape (All subdomains)")
             print("2. Targeted Scrape (JSON list of domains)")
             print("3. Reset and Scrape (Clear history first)")
-            print("4. Exit")
+            print("4. View Existing Datasets")
+            print("5. Exit")
             
-            choice = input("\nSelect an option (1-4): ")
+            choice = input("\nSelect an option (1-5): ")
 
             if choice == "1":
                 asyncio.run(app.run(mode="full"))
@@ -242,14 +282,20 @@ def main_menu():
                 except ValueError as e:
                     print(f"\n[ERROR] {e}")
             elif choice == "3":
-                confirm = input("This will clear all history. Continue? (y/n): ")
+                confirm = input("This will clear all history and existing datasets. Continue? (y/n): ")
                 if confirm.lower() == 'y':
                     app.seen_urls = set()
                     if os.path.exists(app.seen_urls_path):
                         os.remove(app.seen_urls_path)
-                    print("History cleared.")
+                    json_files = glob.glob(os.path.join(output_dir, "*.json"))
+                    for f in json_files:
+                        if "scraped_data_" in f or "partial_data_" in f:
+                            os.remove(f)
+                    print(f"{COLOR_GREEN}HISTORY AND DATASETS CLEARED SUCCESSFULLY.{COLOR_RESET}")
                     asyncio.run(app.run(mode="full"))
             elif choice == "4":
+                app.list_datasets()
+            elif choice == "5":
                 print("Exiting...")
                 break
             else:
@@ -260,7 +306,7 @@ def main_menu():
         print(f"\n\n[FATAL ERROR] {e}")
         logger.exception("Fatal error in main menu")
     finally:
-        print("\nThank you for using the TU-Kenya Scraper Tool.")
+        print(f"\n{COLOR_GREEN}THANK YOU FOR USING THE TU-KENYA SCRAPER TOOL.{COLOR_RESET}")
 
 if __name__ == "__main__":
     main_menu()

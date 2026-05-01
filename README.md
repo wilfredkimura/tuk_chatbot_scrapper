@@ -1,5 +1,7 @@
 # Technical University of Kenya Chatbot Scraper
 
+![TU-Kenya Scraper CLI UI](cli_ui.png)
+
 This is a modular and scalable web scraper designed to extract academic, administrative, and research data from TU-Kenya subdomains for use in RAG-based chatbot systems.
 
 ## Features

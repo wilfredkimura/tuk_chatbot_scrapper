@@ -62,7 +62,12 @@ class RecursiveCrawler:
         percent = (self.completed_roots / self.total_roots) * 100
         bar_length = 20
         filled_length = int(bar_length * self.completed_roots // self.total_roots) if self.total_roots > 0 else 0
-        bar = '█' * filled_length + '-' * (bar_length - filled_length)
+        
+        # ANSI Green for the bar
+        green = "\033[92m"
+        reset = "\033[0m"
+        
+        bar = f"{green}{'█' * filled_length}{reset}{'-' * (bar_length - filled_length)}"
         
         status = f"\r[PROGRESS] |{bar}| {percent:.1f}% ({self.completed_roots}/{self.total_roots} domains) | Scraped: {self.total_pages_scraped} | Skipped: {self.total_skipped}"
         print(status, end="\r", flush=True)
