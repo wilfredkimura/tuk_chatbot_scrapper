@@ -136,34 +136,46 @@ class TUKScraperApp:
         datasets = [f for f in json_files if "scraped_data_" in f]
         return len(datasets)
 
-    def list_datasets(self):
-        json_files = glob.glob(os.path.join(self.output_base_dir, "*.json"))
-        datasets = []
-        for f in json_files:
-            if "scraped_data_" in f:
-                stats = os.stat(f)
-                datasets.append({
-                    "name": os.path.basename(f),
-                    "path": f,
-                    "time": stats.st_mtime,
-                    "size": stats.st_size
-                })
-        
-        # Sort by time descending
-        datasets.sort(key=lambda x: x["time"], reverse=True)
-        
-        if not datasets:
-            print("\n[INFO] NO DATASETS FOUND.")
-            return
-
-        print(f"\n{COLOR_GREEN}--- EXISTING DATASETS (NEWEST FIRST) ---{COLOR_RESET}")
-        print(f"{'#':<3} | {'FILENAME':<45} | {'DATE ADDED':<20} | {'SIZE'}")
-        print("-" * 85)
-        for i, ds in enumerate(datasets, 1):
-            dt = datetime.fromtimestamp(ds["time"]).strftime("%Y-%m-%d %H:%M:%S")
-            size_kb = ds["size"] / 1024
-            print(f"{i:<3} | {ds['name']:<45} | {dt:<20} | {size_kb:.1f} KB")
-        print("-" * 85)
+    def dataset_submenu(self):
+        while True:
+            json_files = glob.glob(os.path.join(self.output_base_dir, "*.json"))
+            datasets = []
+            for f in json_files:
+                if "scraped_data_" in f:
+                    stats = os.stat(f)
+                    datasets.append({
+                        "name": os.path.basename(f),
+                        "path": f,
+                        "time": stats.st_mtime,
+                        "size": stats.st_size
+                    })
+            
+            # Sort by time descending
+            datasets.sort(key=lambda x: x["time"], reverse=True)
+            
+            print(f"\n{COLOR_GREEN}--- DATASET VIEWER ---{COLOR_RESET}")
+            if not datasets:
+                print("[INFO] NO DATASETS FOUND.")
+            else:
+                print(f"{'#':<3} | {'FILENAME':<45} | {'DATE ADDED':<20} | {'SIZE'}")
+                print("-" * 85)
+                for i, ds in enumerate(datasets, 1):
+                    dt = datetime.fromtimestamp(ds["time"]).strftime("%Y-%m-%d %H:%M:%S")
+                    size_kb = ds["size"] / 1024
+                    print(f"{i:<3} | {ds['name']:<45} | {dt:<20} | {size_kb:.1f} KB")
+                print("-" * 85)
+            
+            print("\nOptions:")
+            print("1. Refresh List")
+            print("2. Return to Main Menu")
+            
+            choice = input("\nSelect an option (1-2): ")
+            if choice == "1":
+                continue
+            elif choice == "2":
+                break
+            else:
+                print("Invalid choice.")
 
     async def run(self, mode: str = "full", subdomains: List[str] = None):
         all_config_subdomains = self.load_subdomains()
@@ -266,7 +278,7 @@ def main_menu():
             print("1. Full Scrape (All subdomains)")
             print("2. Targeted Scrape (JSON list of domains)")
             print("3. Reset and Scrape (Clear history first)")
-            print("4. View Existing Datasets")
+            print("4. View Existing Datasets (Submenu)")
             print("5. Exit")
             
             choice = input("\nSelect an option (1-5): ")
@@ -294,7 +306,7 @@ def main_menu():
                     print(f"{COLOR_GREEN}HISTORY AND DATASETS CLEARED SUCCESSFULLY.{COLOR_RESET}")
                     asyncio.run(app.run(mode="full"))
             elif choice == "4":
-                app.list_datasets()
+                app.dataset_submenu()
             elif choice == "5":
                 print("Exiting...")
                 break
