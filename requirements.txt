@@ -4,3 +4,7 @@ loguru
 pydantic
 requests
 lxml
+pdfplumber
+pytesseract
+Pillow
+pymupdf

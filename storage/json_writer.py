@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from datetime import datetime
 from loguru import logger
 from typing import Dict, Any
@@ -10,15 +11,24 @@ class JSONWriter:
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
 
-    def write(self, data: Dict[str, Any]):
+    def write(self, data: Dict[str, Any], category: str = None):
         # Create a filename based on URL or title
         url = data.get("url", "unknown")
-        # Sanitize filename
-        filename = url.replace("https://", "").replace("http://", "").replace("/", "_").replace(".", "_")
-        if len(filename) > 100:
-            filename = filename[:100]
+        # Sanitize filename: remove protocol and replace invalid characters
+        filename = url.replace("https://", "").replace("http://", "")
+        # Replace non-alphanumeric (except . - _) with _
+        filename = re.sub(r'[^a-zA-Z0-9.\-_]', '_', filename)
         
-        filepath = os.path.join(self.output_dir, f"{filename}.json")
+        if len(filename) > 150:
+            filename = filename[:150]
+        
+        target_dir = self.output_dir
+        if category:
+            target_dir = os.path.join(self.output_dir, category)
+            if not os.path.exists(target_dir):
+                os.makedirs(target_dir)
+
+        filepath = os.path.join(target_dir, f"{filename}.json")
         
         # Add timestamp
         data["scraped_at"] = datetime.now().isoformat()
