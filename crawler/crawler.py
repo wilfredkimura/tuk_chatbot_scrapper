@@ -33,46 +33,62 @@ class RecursiveCrawler:
         }
 
     async def crawl(self):
+        self.total_pages_scraped = 0
+        self.total_roots = len(self.start_urls)
+        self.completed_roots = 0
+        
         connector = aiohttp.TCPConnector(ssl=False) # Disable SSL check for university sites if needed
         async with aiohttp.ClientSession(headers=self.headers, connector=connector) as session:
             tasks = [self._crawl_url(url, 0, session) for url in self.start_urls]
-            await asyncio.gather(*tasks)
+            
+            for task in asyncio.as_completed(tasks):
+                await task
+                self.completed_roots += 1
+                self._print_overall_progress()
+
+    def _print_overall_progress(self):
+        percent = (self.completed_roots / self.total_roots) * 100
+        bar_length = 30
+        filled_length = int(bar_length * self.completed_roots // self.total_roots)
+        bar = '█' * filled_length + '-' * (bar_length - filled_length)
+        
+        # Use carriage return to stay on the same line if possible, 
+        # but with loguru output it might just print new lines.
+        # We'll print a clear status message.
+        print(f"\rProgress: |{bar}| {percent:.1f}% ({self.completed_roots}/{self.total_roots} subdomains completed) | Pages Scraped: {self.total_pages_scraped}", end="\n")
 
     async def _crawl_url(self, url: str, depth: int, session: aiohttp.ClientSession):
         if depth > self.max_depth or url in self.visited:
             return
 
         if url in self.already_seen:
-            logger.info(f"Skipping {url} (already scraped)")
+            # logger.info(f"Skipping {url} (already scraped)")
             return
 
         from urllib.parse import urlparse
         domain = urlparse(url).netloc
         if domain in self.failed_domains:
-            logger.info(f"Skipping {url} (domain {domain} previously failed)")
             return
 
         self.visited.add(url)
 
         async with self.semaphore:
             if not await self.robots.can_fetch(url, self.headers["User-Agent"], headers=self.headers):
-                logger.info(f"Skipping {url} (robots.txt)")
                 return
 
             try:
-                # Use a slightly shorter timeout for individual requests to move faster
                 async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as response:
                     if response.status != 200:
-                        logger.warning(f"Failed to fetch {url}: status {response.status}")
                         return
 
                     content_type = response.headers.get("Content-Type", "").lower()
                     
                     if "text/html" in content_type:
                         html = await response.text()
-                        logger.info(f"Fetched HTML {url} (depth {depth})")
                         if self.process_callback:
                             await self.process_callback(url, html, content_type, {"depth": depth})
+                        
+                        self.total_pages_scraped += 1
                         
                         # Discover links only in HTML
                         links = self.discovery.extract_links(html, url)
@@ -82,24 +98,18 @@ class RecursiveCrawler:
                     
                     elif "application/pdf" in content_type:
                         content = await response.read()
-                        logger.info(f"Fetched PDF {url}")
                         if self.process_callback:
                             await self.process_callback(url, content, content_type, {"depth": depth})
+                        self.total_pages_scraped += 1
                     
                     elif any(img_type in content_type for img_type in ["image/jpeg", "image/png", "image/gif"]):
                         content = await response.read()
-                        logger.info(f"Fetched Image {url}")
                         if self.process_callback:
                             await self.process_callback(url, content, content_type, {"depth": depth})
+                        self.total_pages_scraped += 1
                     
-                    else:
-                        logger.info(f"Skipping {url} (unsupported content type: {content_type})")
-
-            except (asyncio.TimeoutError, aiohttp.ClientConnectorError) as e:
-                logger.error(f"Network error crawling {url}: {type(e).__name__}")
-                # If a root domain fails, mark it as failed
+            except (asyncio.TimeoutError, aiohttp.ClientConnectorError):
                 if depth == 0:
-                    logger.error(f"Marking domain {domain} as failed")
                     self.failed_domains.add(domain)
             except Exception as e:
                 logger.error(f"Error crawling {url}: {type(e).__name__}: {e}")
