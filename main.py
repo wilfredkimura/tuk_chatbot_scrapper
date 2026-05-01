@@ -181,9 +181,15 @@ class TUKScraperApp:
                 print(f"\n" + "="*50)
                 print(f"SCRAPE COMPLETED SUCCESSFULLY")
                 print(f"Total Pages Scraped: {crawler.total_pages_scraped}")
+                print(f"Total URLs Skipped (Already Seen): {crawler.total_skipped}")
                 print(f"Output File: {abs_path}")
                 print("="*50)
                 logger.info(f"Crawl completed. Output: {abs_path}")
+            elif success and not output_file:
+                print(f"\n[INFO] Scrape completed, but NO NEW data was collected.")
+                print(f"Total URLs Skipped: {crawler.total_skipped}")
+                if crawler.total_skipped > 0:
+                    print("Hint: If you want to rescrape these URLs, use the 'Reset and Scrape' option (3) from the menu.")
             elif not success:
                 if output_file:
                     print(f"\n[INFO] Script terminated. Partial data saved to: {os.path.abspath(output_file)}")

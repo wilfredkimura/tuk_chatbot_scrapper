@@ -34,6 +34,7 @@ class RecursiveCrawler:
 
     async def crawl(self):
         self.total_pages_scraped = 0
+        self.total_skipped = 0
         self.total_roots = len(self.start_urls)
         self.completed_roots = 0
         
@@ -48,26 +49,25 @@ class RecursiveCrawler:
 
     def _print_overall_progress(self):
         percent = (self.completed_roots / self.total_roots) * 100
-        bar_length = 30
+        bar_length = 20
         filled_length = int(bar_length * self.completed_roots // self.total_roots)
         bar = '█' * filled_length + '-' * (bar_length - filled_length)
         
-        # Use carriage return to stay on the same line if possible, 
-        # but with loguru output it might just print new lines.
-        # We'll print a clear status message.
-        print(f"\rProgress: |{bar}| {percent:.1f}% ({self.completed_roots}/{self.total_roots} subdomains completed) | Pages Scraped: {self.total_pages_scraped}", end="\n")
+        status = f"\rProgress: |{bar}| {percent:.1f}% ({self.completed_roots}/{self.total_roots} subdomains) | Scraped: {self.total_pages_scraped} | Skipped: {self.total_skipped}"
+        print(status, end="\n")
 
     async def _crawl_url(self, url: str, depth: int, session: aiohttp.ClientSession):
         if depth > self.max_depth or url in self.visited:
             return
 
         if url in self.already_seen:
-            # logger.info(f"Skipping {url} (already scraped)")
+            self.total_skipped += 1
             return
 
         from urllib.parse import urlparse
         domain = urlparse(url).netloc
         if domain in self.failed_domains:
+            self.total_skipped += 1
             return
 
         self.visited.add(url)
