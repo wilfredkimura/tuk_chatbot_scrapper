@@ -37,37 +37,48 @@ class RecursiveCrawler:
         self.total_skipped = 0
         self.total_roots = len(self.start_urls)
         self.completed_roots = 0
+        self.active_tasks = set()
         
-        connector = aiohttp.TCPConnector(ssl=False) # Disable SSL check for university sites if needed
+        connector = aiohttp.TCPConnector(ssl=False)
         async with aiohttp.ClientSession(headers=self.headers, connector=connector) as session:
-            tasks = [self._crawl_url(url, 0, session) for url in self.start_urls]
-            
-            for task in asyncio.as_completed(tasks):
-                await task
-                self.completed_roots += 1
-                self._print_overall_progress()
+            # Start root tasks
+            root_tasks = [asyncio.create_task(self._crawl_url(url, 0, session)) for url in self.start_urls]
+            for t in root_tasks:
+                self.active_tasks.add(t)
+                t.add_done_callback(lambda x: self._on_root_complete())
+
+            # Wait for all tasks (including children) to complete
+            while self.active_tasks:
+                # Filter out finished tasks
+                self.active_tasks = {t for t in self.active_tasks if not t.done()}
+                if self.active_tasks:
+                    await asyncio.sleep(1)
+
+    def _on_root_complete(self):
+        self.completed_roots += 1
+        self._print_overall_progress()
 
     def _print_overall_progress(self):
         percent = (self.completed_roots / self.total_roots) * 100
         bar_length = 20
-        filled_length = int(bar_length * self.completed_roots // self.total_roots)
+        filled_length = int(bar_length * self.completed_roots // self.total_roots) if self.total_roots > 0 else 0
         bar = '█' * filled_length + '-' * (bar_length - filled_length)
         
-        status = f"\rProgress: |{bar}| {percent:.1f}% ({self.completed_roots}/{self.total_roots} subdomains) | Scraped: {self.total_pages_scraped} | Skipped: {self.total_skipped}"
-        print(status, end="\n")
+        status = f"\r[PROGRESS] |{bar}| {percent:.1f}% ({self.completed_roots}/{self.total_roots} domains) | Scraped: {self.total_pages_scraped} | Skipped: {self.total_skipped}"
+        print(status, end="\r", flush=True)
 
     async def _crawl_url(self, url: str, depth: int, session: aiohttp.ClientSession):
         if depth > self.max_depth or url in self.visited:
             return
 
         if url in self.already_seen:
-            self.total_skipped += 1
+            if depth == 0: self.total_skipped += 1
             return
 
         from urllib.parse import urlparse
         domain = urlparse(url).netloc
         if domain in self.failed_domains:
-            self.total_skipped += 1
+            if depth == 0: self.total_skipped += 1
             return
 
         self.visited.add(url)
@@ -89,27 +100,33 @@ class RecursiveCrawler:
                             await self.process_callback(url, html, content_type, {"depth": depth})
                         
                         self.total_pages_scraped += 1
+                        self._print_overall_progress() # Update on every page
                         
-                        # Discover links only in HTML
-                        links = self.discovery.extract_links(html, url)
-                        new_links = [l for l in links if l not in self.visited and l not in self.already_seen]
+                        # Discover links
                         if depth < self.max_depth:
-                            await asyncio.gather(*[self._crawl_url(l, depth + 1, session) for l in new_links])
+                            links = self.discovery.extract_links(html, url)
+                            new_links = [l for l in links if l not in self.visited and l not in self.already_seen]
+                            
+                            for link in new_links:
+                                task = asyncio.create_task(self._crawl_url(link, depth + 1, session))
+                                self.active_tasks.add(task)
                     
                     elif "application/pdf" in content_type:
                         content = await response.read()
                         if self.process_callback:
                             await self.process_callback(url, content, content_type, {"depth": depth})
                         self.total_pages_scraped += 1
+                        self._print_overall_progress()
                     
                     elif any(img_type in content_type for img_type in ["image/jpeg", "image/png", "image/gif"]):
                         content = await response.read()
                         if self.process_callback:
                             await self.process_callback(url, content, content_type, {"depth": depth})
                         self.total_pages_scraped += 1
+                        self._print_overall_progress()
                     
             except (asyncio.TimeoutError, aiohttp.ClientConnectorError):
                 if depth == 0:
                     self.failed_domains.add(domain)
             except Exception as e:
-                logger.error(f"Error crawling {url}: {type(e).__name__}: {e}")
+                logger.error(f"Error crawling {url}: {e}")
