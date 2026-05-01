@@ -1,18 +1,44 @@
 import asyncio
 import json
 import os
+import sys
+from datetime import datetime
 from loguru import logger
 from crawler.crawler import RecursiveCrawler
 from parsers.html_parser import HTMLParser
 from normalizers.text_cleaner import TextCleaner
 from storage.json_writer import JSONWriter
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 # Configure loguru
 logger.add("logs/scraper.log", rotation="10 MB", level="INFO")
 
 from workers.pdf_worker import PDFWorker
 from workers.image_worker import ImageWorker
+
+ASCII_LOGO = r"""
+  _____ _   _   _  __
+ |_   _| | | | | |/ /
+   | | | | | | | ' / 
+   | | | |_| | | . \ 
+   |_|  \___/  |_|\_\
+  SCRAPER TOOL V1.0
+"""
+
+TOOL_DESCRIPTION = """
+This tool is designed to crawl and extract data from Technical University of Kenya (TUK) subdomains.
+It supports HTML parsing, PDF text extraction, and Image OCR processing.
+Data is categorized and consolidated into a single JSON file for easy import/export.
+"""
+
+CATEGORIES_INFO = """
+Data Categories:
+- Admissions: Enrollment, intake, and application information.
+- Academics: Staff portals, calendars, and academic resources.
+- Research: Institutional repositories and research publications.
+- Multimedia: Extracted text from PDF documents and images.
+- General: General university information and news.
+"""
 
 class TUKScraperApp:
     def __init__(self, subdomains_file: str, output_base_dir: str):
@@ -23,6 +49,7 @@ class TUKScraperApp:
         self.image_worker = ImageWorker()
         self.cleaner = TextCleaner()
         self.writer = JSONWriter(output_base_dir)
+        
         self.seen_urls_path = os.path.join(output_base_dir, "seen_urls.json")
         self.seen_urls = self.load_seen_urls()
 
@@ -31,7 +58,7 @@ class TUKScraperApp:
             try:
                 with open(self.seen_urls_path, "r") as f:
                     urls = json.load(f)
-                logger.info(f"Loaded {len(urls)} seen URLs from {self.seen_urls_path}")
+                logger.info(f"Loaded {len(urls)} seen URLs")
                 return set(urls)
             except Exception as e:
                 logger.error(f"Failed to load seen URLs: {e}")
@@ -41,7 +68,7 @@ class TUKScraperApp:
         try:
             with open(self.seen_urls_path, "w") as f:
                 json.dump(list(self.seen_urls), f, indent=2)
-            logger.info(f"Saved {len(self.seen_urls)} seen URLs to {self.seen_urls_path}")
+            logger.info(f"Saved {len(self.seen_urls)} seen URLs")
         except Exception as e:
             logger.error(f"Failed to save seen URLs: {e}")
 
@@ -92,51 +119,137 @@ class TUKScraperApp:
             category = self.get_category(url, content_type)
             parsed_data["category"] = category
             
-            # Save to JSON
-            self.writer.write(parsed_data, category=category)
+            # Add to consolidated list
+            self.writer.add_page(parsed_data, category=category)
             
             # Mark as seen
             self.seen_urls.add(url)
         except Exception as e:
             logger.error(f"Error processing page {url}: {e}")
 
-    async def run(self, limit_subdomains: int = None):
-        subdomains = self.load_subdomains()
-        if limit_subdomains:
-            subdomains = subdomains[:limit_subdomains]
-            logger.info(f"Limiting to first {limit_subdomains} subdomains for testing")
+    async def run(self, mode: str = "full", subdomains: List[str] = None):
+        all_config_subdomains = self.load_subdomains()
+        
+        if mode == "targeted" and subdomains:
+            logger.info(f"Targeted mode: crawling {len(subdomains)} domains")
+        else:
+            subdomains = all_config_subdomains
+            logger.info(f"Full mode: crawling {len(subdomains)} subdomains")
 
-        allowed_domains = set(subdomains)
+        allowed_domains = set(all_config_subdomains)
         allowed_domains.add("tukenya.ac.ke")
         allowed_domains.add("www.tukenya.ac.ke")
+        if mode == "targeted":
+            for s in subdomains:
+                allowed_domains.add(s)
         
-        start_urls = ["https://tukenya.ac.ke"]
+        start_urls = []
+        if mode == "full":
+            start_urls.append("https://tukenya.ac.ke")
+        
         start_urls.extend([f"https://{s}" for s in subdomains])
 
         crawler = RecursiveCrawler(
             start_urls=start_urls,
             allowed_domains=allowed_domains,
-            max_depth=2, # Start with depth 2 for Phase 1
+            max_depth=2,
             concurrency=10,
             process_callback=self.process_page,
             already_seen=self.seen_urls
         )
 
-        logger.info(f"Starting crawl for {len(subdomains)} subdomains")
-        await crawler.crawl()
+        try:
+            print(f"\n[INFO] Starting scrape. Data will be saved in: {os.path.abspath(self.output_base_dir)}")
+            await crawler.crawl()
+            success = True
+        except asyncio.CancelledError:
+            print("\n[WARNING] Scrape was interrupted by user.")
+            success = False
+        except Exception as e:
+            print(f"\n[ERROR] An unexpected error occurred during scraping: {e}")
+            logger.exception("Scrape failed")
+            success = False
         
-        # Final save of seen URLs
+        # Save persistence
         self.save_seen_urls()
-        logger.info("Crawl completed")
+        
+        # Save consolidated JSON
+        output_file = self.writer.save_run(mode)
+        
+        if success and output_file:
+            abs_path = os.path.abspath(output_file)
+            print(f"\n" + "="*50)
+            print(f"SCRAPE COMPLETED SUCCESSFULLY")
+            print(f"Output File: {abs_path}")
+            print("="*50)
+            logger.info(f"Crawl completed. Output: {abs_path}")
+        elif not success:
+            print("\n[INFO] Script terminated. Partial data may have been saved.")
+        
+        return success
 
-if __name__ == "__main__":
-    # Define paths
+def validate_json_domains(input_str: str) -> List[str]:
+    try:
+        data = json.loads(input_str)
+        if not isinstance(data, list):
+            raise ValueError("Input must be a JSON list.")
+        if not all(isinstance(item, str) for item in data):
+            raise ValueError("All items in the list must be strings.")
+        return data
+    except json.JSONDecodeError:
+        raise ValueError("Invalid JSON format. Please ensure you paste a valid JSON list.")
+
+def main_menu():
     context_dir = os.path.join(os.getcwd(), "context")
     subdomains_path = os.path.join(context_dir, "tukenya.ac.ke subdomains.json")
     output_dir = os.path.join(os.getcwd(), "output")
 
     app = TUKScraperApp(subdomains_path, output_dir)
-    
-    # Run the app
-    # Removing limit to scrape all subdomains
-    asyncio.run(app.run())
+
+    try:
+        while True:
+            print(ASCII_LOGO)
+            print(TOOL_DESCRIPTION)
+            print(f"Data will be stored in: {os.path.abspath(output_dir)}")
+            print(CATEGORIES_INFO)
+            print("--- Menu ---")
+            print("1. Full Scrape (All subdomains)")
+            print("2. Targeted Scrape (JSON list of domains)")
+            print("3. Reset and Scrape (Clear history first)")
+            print("4. Exit")
+            
+            choice = input("\nSelect an option (1-4): ")
+
+            if choice == "1":
+                asyncio.run(app.run(mode="full"))
+            elif choice == "2":
+                print("\nPlease paste the list of domains in JSON format (e.g., [\"sub1.tukenya.ac.ke\", \"sub2.tukenya.ac.ke\"])")
+                json_input = input("JSON Input: ")
+                try:
+                    target_domains = validate_json_domains(json_input)
+                    asyncio.run(app.run(mode="targeted", subdomains=target_domains))
+                except ValueError as e:
+                    print(f"\n[ERROR] {e}")
+            elif choice == "3":
+                confirm = input("This will clear all history. Continue? (y/n): ")
+                if confirm.lower() == 'y':
+                    app.seen_urls = set()
+                    if os.path.exists(app.seen_urls_path):
+                        os.remove(app.seen_urls_path)
+                    print("History cleared.")
+                    asyncio.run(app.run(mode="full"))
+            elif choice == "4":
+                print("Exiting...")
+                break
+            else:
+                print("Invalid choice, please try again.")
+    except KeyboardInterrupt:
+        print("\n\n[INFO] Script terminated by user (Ctrl+C). Exiting...")
+    except Exception as e:
+        print(f"\n\n[FATAL ERROR] {e}")
+        logger.exception("Fatal error in main menu")
+    finally:
+        print("\nThank you for using the TU-Kenya Scraper Tool.")
+
+if __name__ == "__main__":
+    main_menu()
