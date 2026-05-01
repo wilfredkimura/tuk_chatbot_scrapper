@@ -169,22 +169,25 @@ class TUKScraperApp:
             print(f"\n[ERROR] An unexpected error occurred during scraping: {e}")
             logger.exception("Scrape failed")
             success = False
-        
-        # Save persistence
-        self.save_seen_urls()
-        
-        # Save consolidated JSON
-        output_file = self.writer.save_run(mode)
-        
-        if success and output_file:
-            abs_path = os.path.abspath(output_file)
-            print(f"\n" + "="*50)
-            print(f"SCRAPE COMPLETED SUCCESSFULLY")
-            print(f"Output File: {abs_path}")
-            print("="*50)
-            logger.info(f"Crawl completed. Output: {abs_path}")
-        elif not success:
-            print("\n[INFO] Script terminated. Partial data may have been saved.")
+        finally:
+            # Save persistence
+            self.save_seen_urls()
+            
+            # Save consolidated JSON
+            output_file = self.writer.save_run(mode)
+            
+            if success and output_file:
+                abs_path = os.path.abspath(output_file)
+                print(f"\n" + "="*50)
+                print(f"SCRAPE COMPLETED SUCCESSFULLY")
+                print(f"Output File: {abs_path}")
+                print("="*50)
+                logger.info(f"Crawl completed. Output: {abs_path}")
+            elif not success:
+                if output_file:
+                    print(f"\n[INFO] Script terminated. Partial data saved to: {os.path.abspath(output_file)}")
+                else:
+                    print("\n[INFO] Script terminated. No data was collected.")
         
         return success
 

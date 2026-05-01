@@ -54,11 +54,11 @@ class RecursiveCrawler:
 
         self.visited.add(url)
 
-        if not await self.robots.can_fetch(url, self.headers["User-Agent"], headers=self.headers):
-            logger.info(f"Skipping {url} (robots.txt)")
-            return
-
         async with self.semaphore:
+            if not await self.robots.can_fetch(url, self.headers["User-Agent"], headers=self.headers):
+                logger.info(f"Skipping {url} (robots.txt)")
+                return
+
             try:
                 # Use a slightly shorter timeout for individual requests to move faster
                 async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as response:

@@ -10,6 +10,7 @@ class JSONWriter:
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
         self.collected_data: List[Dict[str, Any]] = []
+        self.checkpoint_interval = 20
 
     def add_page(self, data: Dict[str, Any], category: str = None):
         """Adds a page's data to the internal list for consolidation."""
@@ -17,7 +18,24 @@ class JSONWriter:
         if category:
             data["selected_category"] = category
         self.collected_data.append(data)
+        
+        # Intermediate save to prevent data loss
+        if len(self.collected_data) % self.checkpoint_interval == 0:
+            self._save_checkpoint()
+            
         logger.debug(f"Collected data for {data.get('url')}")
+
+    def _save_checkpoint(self):
+        """Saves a partial backup of the current data."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"partial_data_checkpoint.json"
+        filepath = os.path.join(self.output_dir, filename)
+        try:
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(self.collected_data, f, indent=2, ensure_ascii=False)
+            logger.info(f"Intermediate checkpoint saved with {len(self.collected_data)} records.")
+        except Exception as e:
+            logger.error(f"Failed to save checkpoint: {e}")
 
     def save_run(self, run_mode: str) -> str:
         """Saves all collected data into a single timestamped JSON file and returns the path."""

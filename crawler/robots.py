@@ -17,8 +17,10 @@ class RobotsHandler:
             parser = RobotFileParser()
             try:
                 connector = aiohttp.TCPConnector(ssl=False)
+                # Shorter timeout for robots.txt
+                timeout = aiohttp.ClientTimeout(total=5)
                 async with aiohttp.ClientSession(headers=headers, connector=connector) as session:
-                    async with session.get(robots_url, timeout=10) as response:
+                    async with session.get(robots_url, timeout=timeout) as response:
                         if response.status == 200:
                             content = await response.text()
                             parser.parse(content.splitlines())
@@ -26,7 +28,7 @@ class RobotsHandler:
                             # If no robots.txt, assume allowed
                             parser.parse(["User-agent: *", "Allow: /"])
             except Exception as e:
-                logger.warning(f"Could not fetch robots.txt for {base_url}: {type(e).__name__}: {e}")
+                logger.warning(f"Could not fetch robots.txt for {base_url} (defaulting to Allow): {type(e).__name__}")
                 parser.parse(["User-agent: *", "Allow: /"])
             
             self.parsers[base_url] = parser
